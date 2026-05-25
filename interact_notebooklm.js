@@ -76,7 +76,7 @@ async function main() {
   console.log("Connected to browser session via CDP WebSocket.");
   
   async function evaluate(expression) {
-    const res = await sendCDP('Runtime.evaluate', { expression, returnByValue: true });
+    const res = await sendCDP('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true });
     if (res.exceptionDetails) {
       throw new Error(`JS Exception: ${res.exceptionDetails.exception.description}`);
     }
@@ -803,12 +803,27 @@ async function main() {
     
     const docContent = await evaluate(extractContent);
     
+    // Check if the extracted text only contains UI labels, which indicates it's a visual/image asset
+    const isUILabelOnly = docContent.includes('Download') && docContent.includes('Delete') && docContent.includes('Good content') && docContent.length < 500;
+    
+    let fileContent = docContent;
+    if (isUILabelOnly && downloadStatus.downloaded) {
+      fileContent = `=========================================================================\n`;
+      fileContent += `NotebookLM Studio Asset: ${clickStatus.title}\n`;
+      fileContent += `=========================================================================\n\n`;
+      fileContent += `[File Download Completed]\n`;
+      fileContent += `This is a visual/image asset (such as an Infographic, Slide Deck, or Mind Map).\n\n`;
+      fileContent += `Because it is a visual file, the high-resolution copy was successfully\n`;
+      fileContent += `downloaded directly to your local computer's "Downloads" folder via Chrome.\n\n`;
+      fileContent += `Please check your system's "Downloads" folder to view the complete file!\n`;
+    }
+    
     const fileSlug = clickStatus.title.toLowerCase()
       .replace(/[^a-z0-9]+/g, '_')
       .replace(/(^_+|_+$)/g, '') || 'studio_item';
       
     const outPath = path.join(__dirname, `response_studio_${fileSlug}.txt`);
-    fs.writeFileSync(outPath, docContent, 'utf8');
+    fs.writeFileSync(outPath, fileContent, 'utf8');
     console.log(`Success! Text content retrieved and saved to: response_studio_${fileSlug}.txt`);
   }
   
