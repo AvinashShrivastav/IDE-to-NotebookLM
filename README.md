@@ -58,10 +58,30 @@ Add a source to your currently open notebook.
   - `source_url.txt` (edit to set web page links)
 * **Launcher**: `./upload_source.sh` (an interactive script prompting you to choose text `[t]` or URL `[u]`)
 
-### 6. Generate Studio Study Guide
-Trigger the Notebook Guide and automatically download/generate a comprehensive Study Guide.
-* **Launcher**: `./generate_study_guide.sh`
-* **Output File**: `study_guide_response.txt`
+### 6. Create NotebookLM Studio Assets
+Generate any of the 9 study assets in NotebookLM's **Studio** tab.
+* **Launcher**: `./studio_create.sh`
+* **Options**:
+  1. Audio Overview
+  2. Slide Deck
+  3. Video Overview
+  4. Mind Map
+  5. Reports
+  6. Flashcards
+  7. Quiz
+  8. Infographic
+  9. Data Table
+* **Input File**: `studio_target.txt` (automatically updated when running the launcher)
+* **Output File**: `response_studio_<type>.txt`
+* **Adaptive Polling Safeguard**: Complex generations (like Audio Overview podcasts) can take up to 15 minutes. To avoid triggering Google's rate limits or bot-detection systems, the script implements **Exponential Adaptive Backoff Polling** (e.g. polling every 5s initially, dynamically backing off to 60s intervals). This keeps your session fully safe.
+
+### 7. Fetch Studio History Assets
+List and download/retrieve previously generated Studio files.
+* **Launcher**: `./studio_fetch.sh`
+* **Options**:
+  - `[l]` List all generated historical assets to `studio_assets_list.txt`.
+  - `[d]` Fetch/download the full content of an asset by index (e.g., `1`) or title.
+* **Audio Downloads**: If the target is an **Audio Overview**, the script automatically triggers Chrome to download the generated `.mp3` audio file! Otherwise, it extracts the complete rich text of the document to `response_studio_<slugified_title>.txt`.
 
 ---
 
@@ -75,15 +95,18 @@ Trigger the Notebook Guide and automatically download/generate a comprehensive S
 ├── create_notebook.sh             # Notebook creator launcher
 ├── list_sources.sh                # Source list launcher
 ├── upload_source.sh               # Source uploader launcher (interactive)
-├── generate_study_guide.sh        # Studio study guide launcher
+├── studio_create.sh               # Studio asset generator launcher
+├── studio_fetch.sh                # Studio asset fetcher launcher
 │
 ├── question.txt                   # Input: Question text
 ├── notebook_name.txt              # Input: Name for new notebook
 ├── source_content.txt             # Input: Custom source text body
 ├── source_url.txt                 # Input: Website URL link
+├── studio_target.txt              # Input: Target Studio asset to generate
+├── studio_fetch_target.txt        # Input: Historical asset index/name to retrieve
 │
 ├── notebooks_list.txt             # Output: Dashboard list
 ├── sources_list.txt               # Output: Notebook sources list
-├── study_guide_response.txt       # Output: Downloaded Study Guide
-└── response_*.txt                 # Output: Chat answers
+├── studio_assets_list.txt         # Output: Studio assets list
+└── response_studio_*.txt          # Output: Retrieved Studio file contents
 ```

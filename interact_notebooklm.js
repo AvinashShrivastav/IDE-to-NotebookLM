@@ -11,9 +11,13 @@ const NOTEBOOK_NAME_FILE = path.join(__dirname, 'notebook_name.txt');
 const SOURCE_CONTENT_FILE = path.join(__dirname, 'source_content.txt');
 const SOURCE_URL_FILE = path.join(__dirname, 'source_url.txt');
 
+const STUDIO_TARGET_FILE = path.join(__dirname, 'studio_target.txt');
+const STUDIO_FETCH_TARGET_FILE = path.join(__dirname, 'studio_fetch_target.txt');
+
 const NOTEBOOKS_LIST_FILE = path.join(__dirname, 'notebooks_list.txt');
 const SOURCES_LIST_FILE = path.join(__dirname, 'sources_list.txt');
 const STUDY_GUIDE_FILE = path.join(__dirname, 'study_guide_response.txt');
+const STUDIO_ASSETS_LIST_FILE = path.join(__dirname, 'studio_assets_list.txt');
 
 async function main() {
   console.log(`=========================================`);
@@ -95,6 +99,43 @@ async function main() {
     });
   }
   
+  // Helper to click on the "Studio" tab header
+  async function selectStudioTab() {
+    console.log("Ensuring clean state (closing any open artifact dialogs)...");
+    const closeDialog = `
+      (() => {
+        const closeBtn = Array.from(document.querySelectorAll('.artifact-viewer-container button, button'))
+          .find(b => b.innerText.includes('close') || b.getAttribute('aria-label') === 'Close');
+        if (closeBtn) {
+          closeBtn.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+          closeBtn.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true }));
+          closeBtn.click();
+          return "Closed active open dialog.";
+        }
+        return "No active dialog found to close.";
+      })()
+    `;
+    const closeStatus = await evaluate(closeDialog);
+    console.log(`Clean State: ${closeStatus}`);
+    await new Promise(r => setTimeout(r, 1200));
+
+    console.log("Selecting 'Studio' tab in NotebookLM...");
+    const clickStudio = `
+      (() => {
+        const studioTab = Array.from(document.querySelectorAll('div, button, a, [role="tab"]'))
+          .find(el => (el.innerText || '').trim() === 'Studio');
+        if (studioTab) {
+          studioTab.click();
+          return "Clicked Studio tab header.";
+        }
+        return "Warning: Studio tab header not found. Make sure you are active inside a specific Notebook.";
+      })()
+    `;
+    const status = await evaluate(clickStudio);
+    console.log(`Tab Selection: ${status}`);
+    await new Promise(r => setTimeout(r, 1500)); // wait for transitions
+  }
+  
   await sendCDP('Runtime.enable');
   await sendCDP('Page.enable');
   
@@ -122,7 +163,6 @@ async function main() {
             const id = match[1];
             if (!seen.has(id)) {
               seen.add(id);
-              // Try to locate title inside card
               const titleEl = link.querySelector('.notebook-title, [class*="title"], [class*="name"]') || link;
               const title = (titleEl.innerText || titleEl.textContent || 'Untitled Notebook').trim();
               notebooks.push({ id, title, url });
@@ -200,10 +240,8 @@ async function main() {
     console.log(`Attempting to rename notebook to "${name}"...`);
     const renameScript = `
       (() => {
-        // Look for input or contenteditable elements that represent the title
         let titleEl = document.querySelector('.notebook-name, [class*="notebook-title"], [class*="notebook-name"]');
         if (!titleEl) {
-          // Fallback: look for contenteditable text area at the top header
           titleEl = Array.from(document.querySelectorAll('[contenteditable="true"]')).find(el => {
             const text = el.innerText || '';
             return text.includes('Notebook') || text.includes('Untitled');
@@ -238,7 +276,6 @@ async function main() {
     console.log("Reading sources inside active notebook...");
     const sources = await evaluate(`
       (() => {
-        // Find elements representing active sources
         const cards = Array.from(document.querySelectorAll('.source-title, [class*="source-card"], [class*="source-title"], [class*="source-name"]'))
           .map(el => (el.innerText || el.textContent || '').trim())
           .filter(t => t.length > 0);
@@ -414,7 +451,369 @@ async function main() {
   }
   
   // ==========================================
-  // ACTION: GENERATE STUDY GUIDE
+  // ACTION: STUDIO LIST (FETCH ALL ASSETS)
+  // ==========================================
+  else if (ACTION === 'studio-list') {
+    const currentUrl = await evaluate('window.location.href');
+    if (!currentUrl.includes('/notebook/')) {
+      console.error("Error: You must be inside a specific NotebookLM notebook to list Studio assets.");
+      process.exit(1);
+    }
+    
+    await selectStudioTab();
+    
+    console.log("Extracting Studio generated assets history...");
+    const assets = await evaluate(`
+      (() => {
+        // Look for bottom history lists containing 'artifact-item-button' or matching icons and texts
+        const items = Array.from(document.querySelectorAll('.artifact-item-button, [class*="asset"], [class*="history-item"], [class*="list-item"]'))
+          .filter(el => {
+            const text = el.innerText || '';
+            return text.includes('source') || text.includes('ago') || text.includes('min') || text.includes('hour');
+          })
+          .map((el, idx) => {
+            // Find icons/labels inside the item to identify asset types
+            const text = el.innerText.trim();
+            const lines = text.split('\\n');
+            const title = lines[1] || lines[0] || 'Unknown Generated File';
+            const meta = lines[2] || lines[1] || 'Unknown details';
+            const iconEl = el.querySelector('mat-icon, [class*="icon"]');
+            const type = iconEl ? (iconEl.innerText || iconEl.textContent || 'Doc').trim() : 'Doc';
+            
+            return {
+              index: idx + 1,
+              title: title.trim(),
+              type: type.trim(),
+              meta: meta.trim()
+            };
+          });
+          
+        return items;
+      })()
+    `);
+    
+    console.log("Generated Studio assets successfully retrieved:", assets);
+    
+    let listContent = "=========================================\n";
+    listContent += `NotebookLM Studio Generated Assets (${new Date().toLocaleString()})\n`;
+    listContent += "=========================================\n\n";
+    if (assets.length === 0) {
+      listContent += "(No generated files or assets found in Studio tab history)\n";
+    } else {
+      assets.forEach((ast) => {
+        listContent += `[Asset #${ast.index}]\n`;
+        listContent += `Title: ${ast.title}\n`;
+        listContent += `Type:  ${ast.type}\n`;
+        listContent += `Meta:  ${ast.meta}\n`;
+        listContent += `-----------------------------------------\n\n`;
+      });
+    }
+    
+    fs.writeFileSync(STUDIO_ASSETS_LIST_FILE, listContent, 'utf8');
+    console.log(`Saved generated Studio assets to: ${STUDY_GUIDE_FILE}`);
+  }
+  
+  // ==========================================
+  // ACTION: STUDIO CREATE (WITH ADAPTIVE POLLING)
+  // ==========================================
+  else if (ACTION === 'studio-create') {
+    const currentUrl = await evaluate('window.location.href');
+    if (!currentUrl.includes('/notebook/')) {
+      console.error("Error: You must be inside a specific NotebookLM notebook to generate Studio assets.");
+      process.exit(1);
+    }
+    
+    let target = "Quiz";
+    if (fs.existsSync(STUDIO_TARGET_FILE)) {
+      target = fs.readFileSync(STUDIO_TARGET_FILE, 'utf8').trim() || target;
+    } else {
+      fs.writeFileSync(STUDIO_TARGET_FILE, target, 'utf8');
+    }
+    
+    console.log(`Target Studio Asset to Generate: "${target}"`);
+    
+    await selectStudioTab();
+    
+    console.log(`Locating card for "${target}" in Studio...`);
+    const clickCardScript = `
+      (() => {
+        // Find the specific card title span
+        const span = Array.from(document.querySelectorAll('span.create-label-container'))
+          .find(el => {
+            const text = (el.innerText || '').trim();
+            return text.toLowerCase() === ${JSON.stringify(target.toLowerCase())};
+          });
+          
+        if (span) {
+          const container = span.closest('.create-artifact-button-container');
+          if (container) {
+            container.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+            container.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true }));
+            container.click();
+            return "Successfully clicked card for " + ${JSON.stringify(target)};
+          }
+        }
+        return "Error: Card for " + ${JSON.stringify(target)} + " not found.";
+      })()
+    `;
+    
+    const clickStatus = await evaluate(clickCardScript);
+    console.log(`Generator Click Status: ${clickStatus}`);
+    
+    if (clickStatus.startsWith('Error')) {
+      process.exit(1);
+    }
+    
+    console.log("\n=========================================");
+    console.log("Generation started! Starting Adaptive Polling...");
+    console.log("This safeguards against trigger rate limits & bot protection.");
+    console.log("=========================================\n");
+    
+    // Adaptive Polling Strategy:
+    // Audio Overview can take up to 15 minutes. Custom Quizzes / Slide Decks take 10-60s.
+    // - Phase 1: First 30s -> Poll every 5s
+    // - Phase 2: 30s to 3m -> Poll every 15s
+    // - Phase 3: 3m to 8m -> Poll every 30s
+    // - Phase 4: 8m to 20m -> Poll every 60s
+    
+    const maxTimeMs = 20 * 60 * 1000; // 20 minutes timeout
+    let elapsedMs = 0;
+    let pollIntervalMs = 5000; // start at 5s
+    let previousText = "";
+    let stableCount = 0;
+    let finalDocContent = "";
+    
+    while (elapsedMs < maxTimeMs) {
+      // Set the dynamic interval
+      if (elapsedMs < 30 * 1000) {
+        pollIntervalMs = 5000;
+      } else if (elapsedMs < 3 * 60 * 1000) {
+        pollIntervalMs = 15000;
+      } else if (elapsedMs < 8 * 60 * 1000) {
+        pollIntervalMs = 30000;
+      } else {
+        pollIntervalMs = 60000;
+      }
+      
+      await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
+      elapsedMs += pollIntervalMs;
+      
+      // Check if open document/artifact view is loaded
+      const checkDocScript = `
+        (() => {
+          // Look for active open document panel or markdown viewer
+          const viewer = document.querySelector('.formatted-text, [role="document"], .document-viewer, [class*="viewer"]');
+          const spinner = document.querySelector('[class*="spinner"], [class*="loading"], [class*="indicator"], [class*="progress"]');
+          
+          // Audio Overview generates a player instead of plain formatted text
+          const audioPlayer = document.querySelector('.audio-player-container, [class*="audio-player"]');
+          
+          if (audioPlayer) {
+            // Find if download button is available
+            const downloadBtn = document.querySelector('button[aria-label*="Download"], button[aria-label*="download"]');
+            return {
+              type: 'audio',
+              loaded: !!downloadBtn,
+              text: "Audio Overview Media Player Loaded successfully."
+            };
+          }
+          
+          return {
+            type: 'document',
+            loaded: !!viewer && !spinner,
+            text: viewer ? (viewer.innerText || viewer.textContent || '').trim() : ""
+          };
+        })()
+      `;
+      
+      const state = await evaluate(checkDocScript);
+      const textLen = state.text ? state.text.length : 0;
+      
+      console.log(`[Time: ${Math.round(elapsedMs / 1000)}s] Poll: Type=${state.type}, Loaded=${state.loaded}, Content Length=${textLen}`);
+      
+      if (state.loaded) {
+        if (state.type === 'audio') {
+          console.log("Audio Overview generation completed successfully! Downloading Audio File...");
+          const triggerDownload = `
+            (() => {
+              const downloadBtn = document.querySelector('button[aria-label*="Download"], button[aria-label*="download"]');
+              if (downloadBtn) {
+                downloadBtn.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+                downloadBtn.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true }));
+                downloadBtn.click();
+                return "Clicked download button successfully.";
+              }
+              return "Error: Download button disappeared.";
+            })()
+          `;
+          const downloadStatus = await evaluate(triggerDownload);
+          console.log(`Download Trigger: ${downloadStatus}`);
+          finalDocContent = "Audio Overview Generated and Download triggered successfully inside Chrome.";
+          break;
+        } else if (textLen > 100) {
+          if (state.text === previousText) {
+            stableCount++;
+            if (stableCount >= 2) {
+              finalDocContent = state.text;
+              break;
+            }
+          } else {
+            stableCount = 0;
+            previousText = state.text;
+          }
+        }
+      }
+    }
+    
+    if (!finalDocContent) {
+      console.log("Timeout or empty output. Fetching body fallback...");
+      finalDocContent = await evaluate('document.body.innerText');
+    }
+    
+    const fileSlug = target.toLowerCase()
+      .replace(/[^a-z0-9]+/g, '_')
+      .replace(/(^_+|_+$)/g, '') || 'studio_item';
+      
+    const studioOutPath = path.join(__dirname, `response_studio_${fileSlug}.txt`);
+    fs.writeFileSync(studioOutPath, finalDocContent, 'utf8');
+    console.log(`\nSuccess! Studio response saved to: response_studio_${fileSlug}.txt`);
+  }
+  
+  // ==========================================
+  // ACTION: STUDIO FETCH ITEM
+  // ==========================================
+  else if (ACTION === 'studio-fetch-item') {
+    const currentUrl = await evaluate('window.location.href');
+    if (!currentUrl.includes('/notebook/')) {
+      console.error("Error: You must be inside a specific NotebookLM notebook to fetch Studio assets.");
+      process.exit(1);
+    }
+    
+    let target = "1";
+    if (fs.existsSync(STUDIO_FETCH_TARGET_FILE)) {
+      target = fs.readFileSync(STUDIO_FETCH_TARGET_FILE, 'utf8').trim() || target;
+    } else {
+      fs.writeFileSync(STUDIO_FETCH_TARGET_FILE, target, 'utf8');
+    }
+    
+    console.log(`Target Studio Asset to open/fetch: "${target}"`);
+    
+    await selectStudioTab();
+    
+    console.log("Locating asset card and opening it...");
+    const openItemScript = `
+      (() => {
+        const items = Array.from(document.querySelectorAll('.artifact-item-button, [class*="asset"], [class*="history-item"], [class*="list-item"]'))
+          .filter(el => {
+            const text = el.innerText || '';
+            return text.includes('source') || text.includes('ago') || text.includes('min') || text.includes('hour');
+          });
+          
+        let targetEl = null;
+        const targetStr = ${JSON.stringify(target)};
+        
+        // If target is a number, treat as index (1-based)
+        if (/^\\d+$/.test(targetStr)) {
+          const idx = parseInt(targetStr) - 1;
+          targetEl = items[idx];
+        } else {
+          // Otherwise search by matching text title
+          targetEl = items.find(el => {
+            const lines = el.innerText.split('\\n');
+            const title = lines[1] || lines[0] || '';
+            return title.toLowerCase().includes(targetStr.toLowerCase());
+          });
+        }
+        
+        if (targetEl) {
+          // Select the clickable button inside the asset item card to trigger navigation
+          const btn = targetEl.querySelector('button') || targetEl;
+          btn.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+          btn.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true }));
+          btn.click();
+          return { success: true, title: targetEl.innerText.split('\\n')[1] || targetEl.innerText.split('\\n')[0] };
+        }
+        return { success: false, error: "Asset not found in bottom list." };
+      })()
+    `;
+    
+    const clickStatus = await evaluate(openItemScript);
+    console.log("Open Status:", clickStatus);
+    
+    if (!clickStatus.success) {
+      process.exit(1);
+    }
+    
+    console.log("Waiting for document panel to load and open...");
+    await new Promise(r => setTimeout(r, 4500)); // slightly longer wait for rich document layouts
+    
+    console.log("Triggering original asset file download via Chrome...");
+    const downloadStatus = await evaluate(`
+      (async () => {
+        const audioPlayer = document.querySelector('.audio-player-container, [class*="audio-player"]');
+        if (audioPlayer) {
+          const downloadBtn = document.querySelector('button[aria-label*="Download"], button[aria-label*="download"]');
+          if (downloadBtn) {
+            downloadBtn.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+            downloadBtn.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true }));
+            downloadBtn.click();
+            return { downloaded: true, msg: "Audio download triggered successfully." };
+          }
+          return { downloaded: false, error: "Audio player open but download button not found." };
+        }
+        
+        // Find three-dot menu button in the opened artifact container
+        const menuBtn = Array.from(document.querySelectorAll('.artifact-viewer-container button'))
+          .find(b => b.innerText.includes('more') || b.innerText.includes('horiz') || b.getAttribute('aria-label') === 'More options');
+          
+        if (menuBtn) {
+          menuBtn.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+          menuBtn.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true }));
+          menuBtn.click();
+          
+          // Wait 1.2s for the popover menu to render
+          await new Promise(resolve => setTimeout(resolve, 1200));
+          
+          // Find the download menu item
+          const dlBtn = Array.from(document.querySelectorAll('.mat-mdc-menu-panel button, [role="menuitem"]'))
+            .find(b => b.innerText.includes('Download') || b.innerText.includes('save_alt'));
+            
+          if (dlBtn) {
+            dlBtn.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+            dlBtn.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true }));
+            dlBtn.click();
+            return { downloaded: true, msg: "Clicked Download menu option. File download triggered successfully." };
+          }
+          return { downloaded: false, error: "Menu opened, but Download item not found." };
+        }
+        return { downloaded: false, error: "Three-dot options menu not found." };
+      })()
+    `);
+    
+    console.log("Download Status:", downloadStatus);
+    
+    console.log("Extracting opened document text content...");
+    const extractContent = `
+      (() => {
+        // Multi-selector covering standard text documents, custom notes, quizzes, reports, and mind-maps
+        const viewer = document.querySelector('.formatted-text, [role="document"], .document-viewer, [class*="viewer"], [class*="note"], [class*="active-document"], [class*="opened-document"]');
+        return viewer ? (viewer.innerText || viewer.textContent || '').trim() : document.body.innerText;
+      })()
+    `;
+    
+    const docContent = await evaluate(extractContent);
+    
+    const fileSlug = clickStatus.title.toLowerCase()
+      .replace(/[^a-z0-9]+/g, '_')
+      .replace(/(^_+|_+$)/g, '') || 'studio_item';
+      
+    const outPath = path.join(__dirname, `response_studio_${fileSlug}.txt`);
+    fs.writeFileSync(outPath, docContent, 'utf8');
+    console.log(`Success! Text content retrieved and saved to: response_studio_${fileSlug}.txt`);
+  }
+  
+  // ==========================================
+  // ACTION: GENERATE STUDY GUIDE (LEGACY)
   // ==========================================
   else if (ACTION === 'generate-study-guide') {
     const currentUrl = await evaluate('window.location.href');
@@ -468,7 +867,6 @@ async function main() {
       
       const checkStudyGuideText = `
         (() => {
-          // Look for study guide or formatted card items inside active views
           const cards = Array.from(document.querySelectorAll('[class*="card"], [class*="document"], .response-text'))
             .filter(el => {
               const text = el.innerText || '';
@@ -479,7 +877,6 @@ async function main() {
             return cards[cards.length - 1].innerText;
           }
           
-          // Fallback to checking the last text bubble or markdown section
           const messages = Array.from(document.querySelectorAll('.response-text, [class*="message"]'));
           if (messages.length > 0) {
             return messages[messages.length - 1].innerText;
